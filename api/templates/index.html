@@ -51,36 +51,59 @@ const api = {
 // --- Components ---
 
 function MenuBar({ onRun, onSave, onReset, onStep, activeView, setActiveView, isReady }) {
+    const [showMenu, setShowMenu] = React.useState(false);
+    
     return (
-        <div className="menu-bar">
-            <div className="menu-group">
-                <button className="menu-btn title">8051 Sim</button>
-            </div>
-            
-            <div className="menu-group">
-                <button className={`menu-btn ${activeView === 'editor' ? 'active' : ''}`} onClick={() => setActiveView('editor')}>
-                    Editor
+        <>
+            {/* Top App Bar */}
+            <div className="top-app-bar">
+                <button className="icon-btn menu-btn" onClick={() => setShowMenu(!showMenu)} title="Menu">
+                    ☰
                 </button>
-                <button className={`menu-btn ${activeView === 'simulation' ? 'active' : ''}`} onClick={() => setActiveView('simulation')}>
-                    Sim
-                </button>
-            </div>
-
-            <div className="menu-group action-group">
-                <button className="menu-btn run-btn" onClick={onRun} title="Assemble & Run">
-                    ▶ Run
-                </button>
-                <button className="menu-btn step-btn" onClick={onStep} title="Step">
-                    ⤵ Step
-                </button>
-                <button className="menu-btn reset-btn" onClick={onReset} title="Reset">
-                    ↺ Reset
-                </button>
-                <button className="menu-btn" onClick={onSave} title="Save">
+                <div className="app-title">8051 Simulator</div>
+                <button className="icon-btn" onClick={onSave} title="Save">
                     💾
                 </button>
             </div>
-        </div>
+            
+            {/* Dropdown Menu */}
+            {showMenu && (
+                <div className="dropdown-menu">
+                    <button className="menu-item" onClick={() => { onReset(); setShowMenu(false); }}>
+                        ↺ Reset
+                    </button>
+                    <button className="menu-item" onClick={() => setShowMenu(false)}>
+                        ⚙️ Settings
+                    </button>
+                </div>
+            )}
+            
+            {/* Tabs */}
+            <div className="tab-bar">
+                <button 
+                    className={`tab ${activeView === 'editor' ? 'active' : ''}`}
+                    onClick={() => setActiveView('editor')}
+                >
+                    ✎ Editor
+                </button>
+                <button 
+                    className={`tab ${activeView === 'simulation' ? 'active' : ''}`}
+                    onClick={() => setActiveView('simulation')}
+                >
+                    📊 Simulation
+                </button>
+            </div>
+            
+            {/* Floating Action Buttons */}
+            <div className="fab-container">
+                <button className="fab step-fab" onClick={onStep} title="Step">
+                    ⤵
+                </button>
+                <button className="fab run-fab" onClick={onRun} title="Run">
+                    ▶
+                </button>
+            </div>
+        </>
     );
 }
 
