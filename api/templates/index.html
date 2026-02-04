@@ -1,41 +1,326 @@
 {% extends "base.html" %}
-{% block title %}8051 Simulator {% endblock %}
-{% block head %}
-<!-- CSS only -->
-<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet"
-    integrity="sha384-1BmE4kWBq78iYhFldvKuhfTAU6auU8tT94WrHftjDbrCEXSU1oBoqyl2QvZ6jIW3" crossorigin="anonymous">
-<script src="/static/script.js"></script>
-{% endblock %}
+
 {% block body %}
-<div class="main">
-    <div class="registers-flags" id="registers-flags">
-        {% include "render_registers_flags.html" %}
-    </div>
-    <div class="memory-container" style="grid-area: c;" id="memory-container">
-        {% include "render_memory.html" %}
-    </div>
+{% raw %}
+<script type="text/babel">
+const { useState, useEffect, useRef } = React;
 
-    <div class="controls-container" style="grid-area: d;">
-        <div class="button-head">
-            <button type="button" class="btn btn-primary btn-sm" id="assemble">Assemble</button>
-            <button type="button" class="btn btn-success btn-sm" id="run">Run</button>
-            <button type="button" class="btn btn-secondary btn-sm" id="step">Step</button>
-            <button type="button" class="btn btn-danger btn-sm" id="reset">Reset</button>
-        </div>
-        <div class="form-group code-container">
-            <textarea class="bg-dark text-primary" id="track" readonly></textarea>
-            <!-- <div class="code-box form-control bg-dark text-white border-secondary" id="code" contenteditable="true" -->
-            <textarea class="code-box bg-dark text-white border-secondary" id="code" autocomplete="new-password"
-                placeholder="code here"></textarea>
-        </div>
-    </div>
-    <div class="assembler-container text-white w-50" style="grid-area: e" id="assembler-container">
-        {% include "render_assembler.html" %}
-    </div>
-    <div class="memory-edit-container" style="grid-area: f;">
-        <input class="memory-edit bg-dark text-white border-secondary" placeholder="edit addr(eg.0800H=12H)"
-            id="memory_edit_input" autocomplete="new-password">
-        </div>
+// --- Helper: Simple Download Function ---
+const saveFile = (content, filename) => {
+    const blob = new Blob([content], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename || 'code.asm';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+};
 
-</div>
+// --- API Helpers ---
+const api = {
+    reset: async () => {
+        const res = await fetch('/reset', { method: 'POST' });
+        return res.json();
+    },
+    assemble: async (code, flags) => {
+        const res = await fetch('/assemble', {
+            method: 'POST',
+            body: JSON.stringify({ code, flags })
+        });
+        return res.json();
+    },
+    run: async () => {
+        const res = await fetch('/run', { method: 'POST' });
+        return res.json();
+    },
+    step: async () => {
+        const res = await fetch('/run-once', { method: 'POST' });
+        return res.json();
+    },
+    updateMemory: async (edits) => {
+        const res = await fetch('/memory-edit', {
+            method: 'POST',
+            body: JSON.stringify(edits)
+        });
+        return res.json();
+    }
+};
+
+// --- Components ---
+
+function MenuBar({ onRun, onSave, onReset, onStep, activeView, setActiveView, isReady }) {
+    return (
+        <div className="menu-bar">
+            <div className="menu-group">
+                <button className="menu-btn title">8051 Sim</button>
+            </div>
+            
+            <div className="menu-group">
+                <button className={`menu-btn ${activeView === 'editor' ? 'active' : ''}`} onClick={() => setActiveView('editor')}>
+                    Editor
+                </button>
+                <button className={`menu-btn ${activeView === 'simulation' ? 'active' : ''}`} onClick={() => setActiveView('simulation')}>
+                    Sim
+                </button>
+            </div>
+
+            <div className="menu-group action-group">
+                <button className="menu-btn run-btn" onClick={onRun} title="Assemble & Run">
+                    ▶ Run
+                </button>
+                <button className="menu-btn step-btn" onClick={onStep} title="Step">
+                    ⤵ Step
+                </button>
+                <button className="menu-btn reset-btn" onClick={onReset} title="Reset">
+                    ↺ Reset
+                </button>
+                <button className="menu-btn" onClick={onSave} title="Save">
+                    💾
+                </button>
+            </div>
+        </div>
+    );
+}
+
+function Editor({ code, setCode }) {
+    const textareaRef = useRef(null);
+    const lineNumbersRef = useRef(null);
+
+    const handleScroll = (e) => {
+        if (lineNumbersRef.current) {
+            lineNumbersRef.current.scrollTop = e.target.scrollTop;
+        }
+    };
+
+    const lineCount = code.split('\n').length;
+    const lineNumbers = Array.from({ length: lineCount }, (_, i) => (i + 1).toString()).join('\n');
+
+    return (
+        <div className="editor-container">
+            <div className="line-numbers-col">
+                <textarea
+                    ref={lineNumbersRef}
+                    className="line-numbers-ta"
+                    value={lineNumbers}
+                    readOnly
+                />
+            </div>
+            <textarea
+                ref={textareaRef}
+                className="code-editor"
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                onScroll={handleScroll}
+                spellCheck="false"
+                placeholder="MOV A, #0x00\nMOV B, #0xFF"
+            />
+        </div>
+    );
+}
+
+function RegisterTable({ registers }) {
+    if (!registers) return null;
+    return (
+        <div className="data-panel">
+            <h3 className="panel-title">Registers</h3>
+            <div className="table-responsive">
+                <table className="data-table">
+                    <thead>
+                        <tr><th>Reg</th><th>Value</th></tr>
+                    </thead>
+                    <tbody>
+                        {Object.entries(registers).map(([key, val]) => (
+                            <tr key={key}>
+                                <td className="key-col">{key}</td>
+                                <td className="val-col">{val}</td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    );
+}
+
+function FlagsTable({ flags, setFlags }) {
+    if (!flags) return null;
+    const handleChange = (key, val) => {
+        setFlags(prev => ({ ...prev, [key]: val }));
+    };
+    return (
+        <div className="data-panel">
+            <h3 className="panel-title">Flags</h3>
+            <div className="flags-grid">
+                {Object.entries(flags).map(([key, val]) => (
+                    <div key={key} className="flag-item">
+                        <label>
+                            <span className="flag-label">{key}</span>
+                            <input 
+                                type="checkbox" 
+                                checked={val} 
+                                onChange={(e) => handleChange(key, e.target.checked)}
+                            />
+                        </label>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+}
+
+function MemoryTables({ ram, rom, sfr, title }) {
+    const renderTable = (chunks, label) => {
+        if (!chunks || chunks.length === 0) {
+            return null;
+        }
+        
+        return (
+            <div className="memory-block">
+                <h4 className="memory-label">{label}</h4>
+                <div className="table-responsive">
+                    <table className="memory-grid-table">
+                        <thead>
+                            <tr>
+                                <th>Addr</th>
+                                {Array.from({length: 16}).map((_, i) => <th key={i}>{i.toString(16).toUpperCase()}</th>)}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {chunks.map((chunk, i) => {
+                                const rowBase = chunk[0][0]; 
+                                const rowHeader = rowBase.slice(0, -1);
+                                return (
+                                    <tr key={i}>
+                                        <td className="row-header">{rowHeader}</td>
+                                        {chunk.map(([addr, val]) => (
+                                            <td key={addr} title={addr}>{typeof val === 'string' ? val.replace('0x', '') : val}</td>
+                                        ))}
+                                    </tr>
+                                );
+                            })}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        );
+    };
+
+    const hasRam = ram && ram.length > 0;
+    const hasRom = rom && rom.length > 0;
+    const hasSfr = sfr && sfr.length > 0;
+
+    if (!hasRam && !hasRom && !hasSfr) {
+        return <div className="data-panel memory-panel"><h3 className="panel-title">Memory Map</h3><div style={{padding: '10px', color: '#aaa'}}>No memory data available</div></div>;
+    }
+
+    return (
+        <div className="data-panel memory-panel">
+            <h3 className="panel-title">Memory Map</h3>
+            {renderTable(ram, "Internal RAM (00H - 7FH)")}
+            {renderTable(sfr, "SFR / Upper RAM (80H - FFH)")}
+            {renderTable(rom, "Program Memory (ROM)")}
+        </div>
+    );
+}
+
+function SimulationView({ state, setFlags }) {
+    if (!state) return <div className="empty-state">Run assembly to see simulation</div>;
+
+    return (
+        <div className="simulation-container">
+            <div className="sim-col">
+                <RegisterTable registers={state.registers} />
+                <FlagsTable flags={state.flags} setFlags={setFlags} />
+            </div>
+            <div className="sim-col wide">
+                <MemoryTables ram={state.ram} rom={state.rom} sfr={state.sfr} />
+            </div>
+        </div>
+    );
+}
+
+function App() {
+    const [activeView, setActiveView] = useState('editor'); // 'editor' | 'simulation'
+    const [code, setCode] = useState("MOV A, #0x10\nMOV B, #0x20\nADD A, B\nEND: SJMP END");
+    const [simState, setSimState] = useState(null);
+    const [flags, setFlags] = useState({}); // Local flag state for edits
+    const [error, setError] = useState(null);
+
+    const handleRun = async () => {
+        setError(null);
+        try {
+            // First assemble
+            const asmRes = await api.assemble(code, flags);
+            if (asmRes.error) throw new Error(asmRes.error);
+            
+            // Then run
+            const runRes = await api.run();
+            if (runRes.error) throw new Error(runRes.error);
+            
+            setSimState(runRes);
+            setActiveView('simulation');
+        } catch (e) {
+            setError(e.message);
+            alert("Error: " + e.message);
+        }
+    };
+
+    const handleStep = async () => {
+        setError(null);
+        try {
+            // If not started, assemble first
+            if (!simState || !simState.ready) {
+                 const asmRes = await api.assemble(code, flags);
+                 if (asmRes.error) throw new Error(asmRes.error);
+            }
+            const res = await api.step();
+            if (res.error) throw new Error(res.error);
+            setSimState(res);
+            setActiveView('simulation');
+        } catch (e) {
+            setError(e.message);
+        }
+    };
+
+    const handleReset = async () => {
+        const res = await api.reset();
+        setSimState(res);
+        setFlags(res.flags);
+        setActiveView('editor');
+    };
+
+    const handleSave = () => {
+        saveFile(code, "8051_code.asm");
+    };
+
+    return (
+        <div className="app-root">
+            <MenuBar 
+                onRun={handleRun} 
+                onSave={handleSave} 
+                onReset={handleReset}
+                onStep={handleStep}
+                activeView={activeView}
+                setActiveView={setActiveView}
+                isReady={simState?.ready}
+            />
+            
+            <div className="main-content">
+                <div style={{display: activeView === 'editor' ? 'block' : 'none', height: '100%'}}>
+                    <Editor code={code} setCode={setCode} />
+                </div>
+                <div style={{display: activeView === 'simulation' ? 'block' : 'none', height: '100%'}}>
+                    <SimulationView state={simState} setFlags={setFlags} />
+                </div>
+            </div>
+        </div>
+    );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+</script>
+{% endraw %}
 {% endblock %}
